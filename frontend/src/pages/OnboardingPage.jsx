@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, Camera, X, ArrowRight, ArrowLeft, Sparkles, Check, Plus } from "lucide-react";
+import { Upload, Camera, X, ArrowRight, ArrowLeft, Sparkles, Check, Plus, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
@@ -14,6 +14,8 @@ const OnboardingPage = () => {
   const [step, setStep] = useState(1);
   const [selfPhoto, setSelfPhoto] = useState(null);
   const [selfPhotoFile, setSelfPhotoFile] = useState(null);
+  const [isValidatingPhoto, setIsValidatingPhoto] = useState(false);
+  const [photoValidation, setPhotoValidation] = useState(null);
   const [clothingItems, setClothingItems] = useState([]);
   const [clothingFiles, setClothingFiles] = useState([]);
   const [vibe, setVibe] = useState("");
@@ -31,19 +33,56 @@ const OnboardingPage = () => {
     "Almost ready..."
   ];
 
-  const handleSelfPhotoUpload = useCallback((e) => {
+  const validateFullBodyPhoto = async (file) => {
+    setIsValidatingPhoto(true);
+    setPhotoValidation(null);
+    
+    try {
+      const formData = new FormData();
+      formData.append('person_image', file);
+      
+      const response = await axios.post(`${API}/validate-person-photo`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 30000
+      });
+      
+      setPhotoValidation(response.data);
+      
+      if (!response.data.valid) {
+        toast.warning(response.data.feedback || "Please upload a full-body photo");
+      } else {
+        toast.success(response.data.feedback || "Great photo!");
+      }
+      
+      return response.data.valid;
+    } catch (error) {
+      console.error("Photo validation error:", error);
+      // On error, allow the photo but show a warning
+      toast.info("Photo validation skipped - please ensure your full body is visible");
+      setPhotoValidation({ valid: true, feedback: "Validation skipped" });
+      return true;
+    } finally {
+      setIsValidatingPhoto(false);
+    }
+  };
+
+  const handleSelfPhotoUpload = useCallback(async (e) => {
     const file = e.target.files?.[0];
     if (file) {
       if (!file.type.startsWith('image/')) {
         toast.error("Please upload an image file");
         return;
       }
+      
       setSelfPhotoFile(file);
       const reader = new FileReader();
       reader.onload = (e) => {
         setSelfPhoto(e.target?.result);
       };
       reader.readAsDataURL(file);
+      
+      // Validate the photo for full body
+      await validateFullBodyPhoto(file);
     }
   }, []);
 
@@ -264,15 +303,41 @@ const OnboardingPage = () => {
                         e.stopPropagation();
                         setSelfPhoto(null);
                         setSelfPhotoFile(null);
+                        setPhotoValidation(null);
                       }}
                       className="absolute top-2 right-2 w-8 h-8 bg-white/90 rounded-full flex items-center justify-center shadow-lg hover:bg-white transition-colors"
                     >
                       <X className="w-4 h-4 text-[#1C1C1E]" />
                     </button>
+                    
+                    {/* Validation status */}
                     <div className="absolute bottom-2 left-2 right-2 bg-white/90 rounded-lg px-3 py-2 text-center">
-                      <p className="text-sm text-[#7C9E7E] font-medium flex items-center justify-center gap-2">
-                        <Check className="w-4 h-4" /> Photo uploaded
-                      </p>
+                      {isValidatingPhoto ? (
+                        <p className="text-sm text-[#1C1C1E]/60 font-medium flex items-center justify-center gap-2">
+                          <div className="w-4 h-4 border-2 border-[#7C9E7E] border-t-transparent rounded-full animate-spin" />
+                          Checking full body...
+                        </p>
+                      ) : photoValidation ? (
+                        <p className={`text-sm font-medium flex items-center justify-center gap-2 ${
+                          photoValidation.valid ? 'text-[#7C9E7E]' : 'text-[#C9908A]'
+                        }`}>
+                          {photoValidation.valid ? (
+                            <>
+                              <Check className="w-4 h-4" /> 
+                              {photoValidation.feedback || "Full body visible!"}
+                            </>
+                          ) : (
+                            <>
+                              <AlertCircle className="w-4 h-4" />
+                              {photoValidation.feedback || "Please show full body"}
+                            </>
+                          )}
+                        </p>
+                      ) : (
+                        <p className="text-sm text-[#7C9E7E] font-medium flex items-center justify-center gap-2">
+                          <Check className="w-4 h-4" /> Photo uploaded
+                        </p>
+                      )}
                     </div>
                   </div>
                 ) : (

@@ -147,6 +147,93 @@ async def get_status_checks():
     return status_checks
 
 
+@api_router.post("/validate-person-photo")
+async def validate_person_photo(
+    person_image: UploadFile = File(...)
+):
+    """
+    Validate that the uploaded photo shows a person's full body.
+    Uses Gemini to analyze the image.
+    """
+    api_key = GEMINI_API_KEY or EMERGENT_LLM_KEY
+    if not api_key:
+        raise HTTPException(status_code=500, detail="No API key configured")
+    
+    try:
+        # Read and compress image
+        content = await person_image.read()
+        compressed = compress_image(content, max_size=800, quality=80)
+        b64 = image_to_base64(compressed)
+        
+        # Initialize Gemini for validation
+        session_id = f"validate-{uuid.uuid4()}"
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=session_id,
+            system_message="You are an image analysis assistant that validates photos for a fashion styling app."
+        )
+        chat.with_model("gemini", "gemini-2.5-flash")
+        
+        # Validation prompt
+        prompt = """Analyze this photo and determine if it shows a person's FULL BODY (head to feet visible).
+
+Return a JSON object with these fields:
+- "is_full_body": boolean (true if full body from head to at least knees/feet is visible)
+- "is_person_visible": boolean (true if a person is clearly visible in the photo)
+- "feedback": string (brief feedback for the user, e.g. "Great full-body photo!" or "Please upload a photo showing your full body from head to feet")
+- "body_parts_visible": array of strings (list which parts are visible: "head", "torso", "arms", "legs", "feet")
+
+Return ONLY the JSON object, no other text."""
+
+        user_message = UserMessage(
+            text=prompt,
+            file_contents=[ImageContent(image_base64=b64)]
+        )
+        
+        logger.info("Validating person photo with Gemini")
+        response = await chat.send_message(user_message)
+        
+        # Parse response
+        try:
+            response_text = response.strip()
+            if response_text.startswith("```"):
+                lines = response_text.split('\n')
+                response_text = '\n'.join(lines[1:-1] if lines[-1] == '```' else lines[1:])
+            
+            start_idx = response_text.find('{')
+            end_idx = response_text.rfind('}') + 1
+            if start_idx != -1 and end_idx > start_idx:
+                json_str = response_text[start_idx:end_idx]
+                result = json.loads(json_str)
+            else:
+                result = json.loads(response_text)
+                
+            return {
+                "valid": result.get("is_full_body", False) and result.get("is_person_visible", False),
+                "is_full_body": result.get("is_full_body", False),
+                "is_person_visible": result.get("is_person_visible", False),
+                "feedback": result.get("feedback", "Unable to analyze photo"),
+                "body_parts_visible": result.get("body_parts_visible", [])
+            }
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse validation response: {response[:200]}")
+            return {
+                "valid": True,  # Default to valid if parsing fails
+                "is_full_body": True,
+                "is_person_visible": True,
+                "feedback": "Photo accepted",
+                "body_parts_visible": []
+            }
+            
+    except Exception as e:
+        logger.error(f"Error validating photo: {e}")
+        return {
+            "valid": True,  # Default to valid on error
+            "feedback": "Photo validation skipped",
+            "error": str(e)
+        }
+
+
 @api_router.post("/generate-outfits")
 async def generate_outfits(
     vibe: str = Form(...),
@@ -296,12 +383,21 @@ async def generate_outfit_image(
         )
         chat.with_model("gemini", "gemini-3.1-flash-image-preview").with_params(modalities=["image", "text"])
         
-        # Build image generation prompt
-        prompt = f"""Create a realistic fashion photo showing a person wearing this outfit: {outfit_description}
+        # Build image generation prompt - CRITICAL: Must explicitly use the person's photo
+        prompt = f"""IMPORTANT: You must edit the FIRST image I'm providing (the person's photo) to show them wearing the outfit.
 
-Use the person in the reference photo as the model. The outfit should include the clothing items shown in the other images. 
+The first image is a photo of a real person - this is the EXACT person who should appear in the output image. Keep their face, body shape, skin tone, and overall appearance EXACTLY the same.
 
-Make it look like a professional fashion photograph with good lighting and composition. The person should be shown in a natural pose wearing the complete outfit."""
+The other images show clothing items. Edit the person's photo to show them wearing these specific clothing items: {outfit_description}
+
+Requirements:
+1. The OUTPUT must show the SAME PERSON from the first image - same face, same body, same person
+2. Replace their current clothes with the clothing items shown in the other images
+3. Keep the person's pose natural and similar to their original photo
+4. Maintain realistic lighting and proportions
+5. The final image should look like a real photo of THIS SPECIFIC PERSON wearing the new outfit
+
+Do NOT generate a different person. The person in the output MUST be the same person from the first reference image."""
 
         # Create message with all images
         image_contents = [ImageContent(image_base64=person_b64)]
