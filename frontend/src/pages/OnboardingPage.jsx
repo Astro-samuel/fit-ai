@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { API } from "@/App";
 import axios from "axios";
+import { compressImage, compressImages } from "@/utils/imageCompression";
 
 const OnboardingPage = () => {
   const navigate = useNavigate();
@@ -91,9 +92,14 @@ const OnboardingPage = () => {
     }, 3000);
 
     try {
+      // Compress images before upload for faster processing
+      toast.info("Compressing images...");
+      const compressedClothingFiles = await compressImages(clothingFiles, 800, 0.8);
+      const compressedSelfPhoto = await compressImage(selfPhotoFile, 1024, 0.85);
+      
       const formData = new FormData();
       formData.append('vibe', vibe);
-      clothingFiles.forEach((file) => {
+      compressedClothingFiles.forEach((file) => {
         formData.append('clothing_images', file);
       });
 
@@ -104,13 +110,14 @@ const OnboardingPage = () => {
 
       clearInterval(messageInterval);
       
-      // Navigate to swipe page with data
+      // Navigate to swipe page with data including compressed self photo
       navigate('/swipe', { 
         state: { 
           outfits: response.data.outfits,
           clothingPreviews: response.data.clothing_previews,
           selfPhoto: selfPhoto,
-          selfPhotoFile: selfPhotoFile,
+          selfPhotoFile: compressedSelfPhoto,
+          clothingFiles: compressedClothingFiles,
           vibe: vibe
         }
       });

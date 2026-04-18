@@ -132,9 +132,9 @@ const SavedLooksPage = () => {
                   >
                     {/* Image area */}
                     <div className="aspect-[4/5] bg-gradient-to-br from-[#F0F0ED] to-[#E5E5E0] relative overflow-hidden">
-                      {look.tryon_image_url ? (
+                      {look.generated_image_url ? (
                         <img 
-                          src={look.tryon_image_url}
+                          src={look.generated_image_url}
                           alt={look.title}
                           className="w-full h-full object-cover"
                         />

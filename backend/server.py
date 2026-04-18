@@ -12,14 +12,15 @@ import uuid
 from datetime import datetime, timezone
 import base64
 import json
-import anthropic
-import replicate
-import httpx
-import tempfile
-import asyncio
+from io import BytesIO
+from PIL import Image
 
+# Load env first
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# Import emergent integrations after env is loaded
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -27,8 +28,8 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # API Keys
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
-REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
 
 # Create the main app
 app = FastAPI()
@@ -61,20 +62,13 @@ class OutfitSuggestion(BaseModel):
     why_it_works: str
     vibe_match: str
 
-class OutfitGenerateRequest(BaseModel):
-    vibe: str
-    clothing_descriptions: List[str]
-
-class OutfitGenerateResponse(BaseModel):
-    outfits: List[OutfitSuggestion]
-
 class SavedLook(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str
     why_it_works: str
     vibe_match: str
     items_used: List[int]
-    tryon_image_url: Optional[str] = None
+    generated_image_url: Optional[str] = None
     collage_items: List[str] = []
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -83,7 +77,7 @@ class SaveLookRequest(BaseModel):
     why_it_works: str
     vibe_match: str
     items_used: List[int]
-    tryon_image_url: Optional[str] = None
+    generated_image_url: Optional[str] = None
     collage_items: List[str] = []
 
 
@@ -105,6 +99,29 @@ def get_mime_type(filename: str) -> str:
     }
     return mime_map.get(ext, 'image/jpeg')
 
+def compress_image(image_bytes: bytes, max_size: int = 1024, quality: int = 85) -> bytes:
+    """Compress and resize image for faster processing"""
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        
+        # Convert to RGB if necessary
+        if img.mode in ('RGBA', 'P'):
+            img = img.convert('RGB')
+        
+        # Resize if larger than max_size
+        if max(img.size) > max_size:
+            ratio = max_size / max(img.size)
+            new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+        
+        # Save with compression
+        output = BytesIO()
+        img.save(output, format='JPEG', quality=quality, optimize=True)
+        return output.getvalue()
+    except Exception as e:
+        logger.error(f"Error compressing image: {e}")
+        return image_bytes
+
 
 # ============ Routes ============
 
@@ -125,7 +142,7 @@ async def create_status_check(input: StatusCheckCreate):
 async def get_status_checks():
     status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
     for check in status_checks:
-        if isinstance(check['timestamp'], str):
+        if isinstance(check.get('timestamp'), str):
             check['timestamp'] = datetime.fromisoformat(check['timestamp'])
     return status_checks
 
@@ -136,10 +153,11 @@ async def generate_outfits(
     clothing_images: List[UploadFile] = File(...)
 ):
     """
-    Generate outfit suggestions using Claude AI based on uploaded clothing images and vibe.
+    Generate outfit suggestions using Gemini AI based on uploaded clothing images and vibe.
     """
-    if not ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=500, detail="Anthropic API key not configured")
+    api_key = GEMINI_API_KEY or EMERGENT_LLM_KEY
+    if not api_key:
+        raise HTTPException(status_code=500, detail="No API key configured")
     
     if len(clothing_images) < 3:
         raise HTTPException(status_code=400, detail="Please upload at least 3 clothing items")
@@ -148,38 +166,39 @@ async def generate_outfits(
         raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
     
     try:
-        # Read all clothing images and convert to base64
+        # Read and compress all clothing images
         clothing_data = []
+        image_contents = []
+        
         for i, img in enumerate(clothing_images):
             content = await img.read()
-            b64 = image_to_base64(content)
+            # Compress image for faster processing
+            compressed = compress_image(content, max_size=800, quality=80)
+            b64 = image_to_base64(compressed)
             mime_type = get_mime_type(img.filename or f"image_{i}.jpg")
+            
             clothing_data.append({
                 "index": i,
                 "base64": b64,
                 "mime_type": mime_type,
                 "filename": img.filename
             })
-        
-        # Build the Claude message with images
-        claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        
-        # Build content array with all clothing images
-        content = []
-        for item in clothing_data:
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": item["mime_type"],
-                    "data": item["base64"]
-                }
-            })
-        
-        content.append({
-            "type": "text",
-            "text": f"""I've uploaded {len(clothing_data)} clothing items (indexed 0 to {len(clothing_data)-1}).
             
+            # Create ImageContent for Gemini
+            image_contents.append(ImageContent(image_base64=b64))
+        
+        # Initialize Gemini chat
+        session_id = f"outfit-gen-{uuid.uuid4()}"
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=session_id,
+            system_message="You are FitAI, an expert personal stylist. You analyze clothing items and create outfit combinations. You understand color theory, silhouette balance, fabric weight, and occasion dressing. You always explain why an outfit works. You never suggest buying new clothes. Always return valid JSON."
+        )
+        chat.with_model("gemini", "gemini-2.5-flash")
+        
+        # Build the prompt
+        prompt_text = f"""I've uploaded {len(clothing_data)} clothing items (indexed 0 to {len(clothing_data)-1}).
+
 The user's vibe/style goal is: "{vibe}"
 
 Please analyze these clothing items and create 5 outfit combinations using ONLY these exact items. Consider color theory, silhouette balance, fabric weight, and occasion appropriateness.
@@ -190,28 +209,30 @@ Return your response as a valid JSON array with exactly 5 objects. Each object m
 - "why_it_works": 2-3 sentences explaining why this combination works (string)
 - "vibe_match": How this outfit matches the requested vibe (string)
 
-IMPORTANT: Return ONLY the JSON array, no other text or explanation."""
-        })
-        
-        system_prompt = """You are FitAI, an expert personal stylist. The user has uploaded photos of clothes they own. Your job is to create outfit combinations from exactly these items. You understand color theory, silhouette balance, fabric weight, and occasion dressing. You always explain why an outfit works so the user learns. You never suggest buying new clothes. Factor the user's described vibe and personality into every suggestion. Always return valid JSON."""
-        
-        logger.info(f"Calling Claude API with {len(clothing_data)} images and vibe: {vibe}")
-        
-        response = claude_client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            system=system_prompt,
-            messages=[
-                {"role": "user", "content": content}
-            ]
+IMPORTANT: Return ONLY the JSON array, no other text or explanation. Do not wrap in markdown code blocks."""
+
+        # Create message with images
+        user_message = UserMessage(
+            text=prompt_text,
+            file_contents=image_contents
         )
         
-        # Parse the response
-        response_text = response.content[0].text
-        logger.info(f"Claude response: {response_text[:500]}...")
+        logger.info(f"Calling Gemini API with {len(clothing_data)} images and vibe: {vibe}")
         
-        # Try to extract JSON from response
+        # Send message and get response
+        response = await chat.send_message(user_message)
+        
+        logger.info(f"Gemini response received: {response[:200]}...")
+        
+        # Parse the response
         try:
+            # Clean response - remove markdown code blocks if present
+            response_text = response.strip()
+            if response_text.startswith("```"):
+                # Remove markdown code blocks
+                lines = response_text.split('\n')
+                response_text = '\n'.join(lines[1:-1] if lines[-1] == '```' else lines[1:])
+            
             # Find JSON array in response
             start_idx = response_text.find('[')
             end_idx = response_text.rfind(']') + 1
@@ -221,10 +242,11 @@ IMPORTANT: Return ONLY the JSON array, no other text or explanation."""
             else:
                 outfits = json.loads(response_text)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse Claude response as JSON: {e}")
+            logger.error(f"Failed to parse Gemini response as JSON: {e}")
+            logger.error(f"Response was: {response[:500]}")
             raise HTTPException(status_code=500, detail="Failed to parse AI response")
         
-        # Return clothing base64 data for collage fallback
+        # Return clothing base64 data for collage/display
         clothing_previews = [f"data:{item['mime_type']};base64,{item['base64']}" for item in clothing_data]
         
         return {
@@ -232,73 +254,98 @@ IMPORTANT: Return ONLY the JSON array, no other text or explanation."""
             "clothing_previews": clothing_previews
         }
         
-    except anthropic.APIError as e:
-        logger.error(f"Anthropic API error: {e}")
-        raise HTTPException(status_code=500, detail=f"AI service error: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error generating outfits: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"AI service error: {str(e)}")
 
 
-@api_router.post("/virtual-tryon")
-async def virtual_tryon(
+@api_router.post("/generate-outfit-image")
+async def generate_outfit_image(
     person_image: UploadFile = File(...),
-    garment_image: UploadFile = File(...),
-    category: str = Form(default="upper_body"),
-    garment_description: str = Form(default="clothing item")
+    outfit_description: str = Form(...),
+    clothing_images: List[UploadFile] = File(...)
 ):
     """
-    Generate a virtual try-on image using Replicate's IDM-VTON model.
+    Generate an image of the person wearing the outfit using Gemini Nano Banana.
     """
-    if not REPLICATE_API_TOKEN:
-        raise HTTPException(status_code=500, detail="Replicate API token not configured")
+    api_key = EMERGENT_LLM_KEY  # Nano Banana requires Emergent key
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Emergent LLM key not configured")
     
     try:
-        # Read images
+        # Read and compress person image
         person_content = await person_image.read()
-        garment_content = await garment_image.read()
+        person_compressed = compress_image(person_content, max_size=1024, quality=85)
+        person_b64 = image_to_base64(person_compressed)
         
-        # Convert to data URLs
-        person_mime = get_mime_type(person_image.filename or "person.jpg")
-        garment_mime = get_mime_type(garment_image.filename or "garment.jpg")
+        # Read and compress clothing images
+        clothing_b64_list = []
+        for img in clothing_images:
+            content = await img.read()
+            compressed = compress_image(content, max_size=600, quality=80)
+            clothing_b64_list.append(image_to_base64(compressed))
         
-        person_data_url = f"data:{person_mime};base64,{image_to_base64(person_content)}"
-        garment_data_url = f"data:{garment_mime};base64,{image_to_base64(garment_content)}"
+        # Initialize Gemini Nano Banana for image generation
+        session_id = f"outfit-img-{uuid.uuid4()}"
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=session_id,
+            system_message="You are an expert fashion image generator. Create realistic, high-quality fashion photos."
+        )
+        chat.with_model("gemini", "gemini-3.1-flash-image-preview").with_params(modalities=["image", "text"])
         
-        logger.info(f"Calling Replicate IDM-VTON with category: {category}")
+        # Build image generation prompt
+        prompt = f"""Create a realistic fashion photo showing a person wearing this outfit: {outfit_description}
+
+Use the person in the reference photo as the model. The outfit should include the clothing items shown in the other images. 
+
+Make it look like a professional fashion photograph with good lighting and composition. The person should be shown in a natural pose wearing the complete outfit."""
+
+        # Create message with all images
+        image_contents = [ImageContent(image_base64=person_b64)]
+        for b64 in clothing_b64_list:
+            image_contents.append(ImageContent(image_base64=b64))
         
-        # Initialize Replicate client
-        replicate_client = replicate.Client(api_token=REPLICATE_API_TOKEN)
-        
-        # Run the model
-        output = replicate_client.run(
-            "cuuupid/idm-vton:c871bb9b046c1b1e8f53bfdbd8be3c8c3fd9eb8f78fbba83e75d74e3f5fc7740",
-            input={
-                "human_img": person_data_url,
-                "garm_img": garment_data_url,
-                "category": category,
-                "garment_des": garment_description,
-            }
+        user_message = UserMessage(
+            text=prompt,
+            file_contents=image_contents
         )
         
-        logger.info(f"Replicate output: {output}")
+        logger.info("Calling Gemini Nano Banana for outfit image generation")
         
-        # Output is typically a URL to the generated image
-        if isinstance(output, str):
-            return {"tryon_image_url": output, "success": True}
-        elif hasattr(output, '__iter__'):
-            # If it's an iterator/list, get first item
-            for item in output:
-                return {"tryon_image_url": str(item), "success": True}
+        # Generate image
+        text_response, images = await chat.send_message_multimodal_response(user_message)
         
-        raise HTTPException(status_code=500, detail="Unexpected output format from Replicate")
+        if images and len(images) > 0:
+            # Return the generated image as base64 data URL
+            img_data = images[0]
+            mime_type = img_data.get('mime_type', 'image/png')
+            data = img_data.get('data', '')
+            image_url = f"data:{mime_type};base64,{data}"
+            
+            logger.info("Successfully generated outfit image")
+            return {
+                "success": True,
+                "generated_image_url": image_url,
+                "text_response": text_response
+            }
+        else:
+            logger.warning("No image generated by Nano Banana")
+            return {
+                "success": False,
+                "generated_image_url": None,
+                "error": "No image was generated"
+            }
         
-    except replicate.exceptions.ReplicateError as e:
-        logger.error(f"Replicate API error: {e}")
-        return {"tryon_image_url": None, "success": False, "error": str(e)}
     except Exception as e:
-        logger.error(f"Error in virtual try-on: {e}")
-        return {"tryon_image_url": None, "success": False, "error": str(e)}
+        logger.error(f"Error generating outfit image: {e}")
+        return {
+            "success": False,
+            "generated_image_url": None,
+            "error": str(e)
+        }
 
 
 @api_router.post("/saved-looks", response_model=SavedLook)
@@ -309,7 +356,7 @@ async def save_look(request: SaveLookRequest):
         why_it_works=request.why_it_works,
         vibe_match=request.vibe_match,
         items_used=request.items_used,
-        tryon_image_url=request.tryon_image_url,
+        generated_image_url=request.generated_image_url,
         collage_items=request.collage_items
     )
     

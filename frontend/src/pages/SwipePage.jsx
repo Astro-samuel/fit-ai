@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
-import { Heart, X, ArrowLeft, RefreshCw, Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
+import { Heart, X, ArrowLeft, RefreshCw, Bookmark, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -14,21 +14,25 @@ const SwipePage = () => {
   
   const [outfits, setOutfits] = useState([]);
   const [clothingPreviews, setClothingPreviews] = useState([]);
+  const [clothingFiles, setClothingFiles] = useState([]);
   const [selfPhoto, setSelfPhoto] = useState(null);
+  const [selfPhotoFile, setSelfPhotoFile] = useState(null);
   const [currentVibe, setCurrentVibe] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [direction, setDirection] = useState(0);
   const [tweakVibe, setTweakVibe] = useState("");
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const [tryonImages, setTryonImages] = useState({});
-  const [isLoadingTryon, setIsLoadingTryon] = useState({});
+  const [generatedImages, setGeneratedImages] = useState({});
+  const [isGeneratingImage, setIsGeneratingImage] = useState({});
 
   // Initialize from navigation state
   useEffect(() => {
     if (location.state) {
       setOutfits(location.state.outfits || []);
       setClothingPreviews(location.state.clothingPreviews || []);
+      setClothingFiles(location.state.clothingFiles || []);
       setSelfPhoto(location.state.selfPhoto);
+      setSelfPhotoFile(location.state.selfPhotoFile);
       setCurrentVibe(location.state.vibe || "");
     } else {
       navigate("/onboarding");
@@ -74,7 +78,7 @@ const SwipePage = () => {
         why_it_works: outfit.why_it_works,
         vibe_match: outfit.vibe_match,
         items_used: itemsUsed,
-        tryon_image_url: tryonImages[currentIndex] || null,
+        generated_image_url: generatedImages[currentIndex] || null,
         collage_items: collageItems
       });
       
@@ -87,6 +91,51 @@ const SwipePage = () => {
     } catch (error) {
       console.error("Error saving look:", error);
       toast.error("Failed to save look");
+    }
+  };
+
+  // Generate outfit image using Nano Banana
+  const generateOutfitImage = async (outfitIndex) => {
+    const outfit = outfits[outfitIndex];
+    if (!outfit || !selfPhotoFile || isGeneratingImage[outfitIndex]) return;
+    
+    setIsGeneratingImage(prev => ({ ...prev, [outfitIndex]: true }));
+    toast.info("Generating outfit image with AI...");
+    
+    try {
+      const formData = new FormData();
+      formData.append('person_image', selfPhotoFile);
+      formData.append('outfit_description', `${outfit.title}: ${outfit.why_it_works}`);
+      
+      // Add the clothing items used in this outfit
+      const itemsUsed = outfit.items_used || [];
+      if (clothingFiles.length > 0) {
+        itemsUsed.forEach(idx => {
+          if (clothingFiles[idx]) {
+            formData.append('clothing_images', clothingFiles[idx]);
+          }
+        });
+      }
+      
+      const response = await axios.post(`${API}/generate-outfit-image`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000
+      });
+      
+      if (response.data.success && response.data.generated_image_url) {
+        setGeneratedImages(prev => ({
+          ...prev,
+          [outfitIndex]: response.data.generated_image_url
+        }));
+        toast.success("Outfit image generated!");
+      } else {
+        toast.error(response.data.error || "Failed to generate image");
+      }
+    } catch (error) {
+      console.error("Error generating outfit image:", error);
+      toast.error("Failed to generate outfit image");
+    } finally {
+      setIsGeneratingImage(prev => ({ ...prev, [outfitIndex]: false }));
     }
   };
 
@@ -218,10 +267,10 @@ const SwipePage = () => {
               >
                 {/* Outfit image area */}
                 <div className="flex-1 bg-gradient-to-br from-[#F0F0ED] to-[#E5E5E0] relative overflow-hidden">
-                  {tryonImages[currentIndex] ? (
+                  {generatedImages[currentIndex] ? (
                     <img 
-                      src={tryonImages[currentIndex]}
-                      alt="Virtual try-on"
+                      src={generatedImages[currentIndex]}
+                      alt="AI Generated outfit"
                       className="w-full h-full object-cover"
                     />
                   ) : selfPhoto ? (
@@ -247,12 +296,29 @@ const SwipePage = () => {
                           ))}
                         </div>
                       </div>
+                      {/* Generate AI Image button */}
+                      {selfPhotoFile && clothingFiles.length > 0 && !isGeneratingImage[currentIndex] && (
+                        <button
+                          data-testid="generate-image-btn"
+                          onClick={() => generateOutfitImage(currentIndex)}
+                          className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-[#7C9E7E] text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg hover:bg-[#6A8A6C] transition-colors flex items-center gap-2"
+                        >
+                          <Sparkles className="w-4 h-4" />
+                          Generate AI Image
+                        </button>
+                      )}
+                      {isGeneratingImage[currentIndex] && (
+                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2">
+                          <div className="w-4 h-4 border-2 border-[#7C9E7E] border-t-transparent rounded-full animate-spin" />
+                          Generating...
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
                       <p className="text-[#1C1C1E]/40">Outfit visualization</p>
                     </div>
-                  )}
+                  )}}
                   
                   {/* Card number indicator */}
                   <div className="absolute top-4 right-4 bg-white/80 backdrop-blur-sm rounded-full px-3 py-1">
