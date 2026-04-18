@@ -1,0 +1,96 @@
+{
+  "theme": "light",
+  "archetype": "Organic & Earthy / High-end Editorial",
+  "colors": {
+    "background": "#FAFAF8",
+    "foreground": "#1C1C1E",
+    "primary": "#7C9E7E",
+    "primary_foreground": "#FFFFFF",
+    "secondary": "#C9908A",
+    "secondary_foreground": "#FFFFFF",
+    "muted": "#F0F0ED",
+    "muted_foreground": "#7A7A78",
+    "border": "#E5E5E0",
+    "surface": "#FFFFFF",
+    "heart_active": "#C9908A",
+    "dismiss": "#E5E5E0"
+  },
+  "typography": {
+    "heading_font": "Playfair Display",
+    "body_font": "Inter",
+    "rules": [
+      "Headings must use Playfair Display with tracking-tight (-0.025em to -0.05em).",
+      "Body text must use Inter with generous line-height (leading-relaxed).",
+      "Labels and overlines must be Uppercase, tiny (text-xs), and wide spacing (tracking-[0.2em])."
+    ],
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl font-serif tracking-tight text-[#1C1C1E]",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl font-serif tracking-tight text-[#1C1C1E]",
+      "h3": "text-xl sm:text-2xl font-serif text-[#1C1C1E]",
+      "body": "text-base font-sans text-[#1C1C1E]/80",
+      "caption": "text-sm font-sans text-[#1C1C1E]/60",
+      "overline": "text-xs font-sans uppercase tracking-widest text-[#7C9E7E] font-medium"
+    }
+  },
+  "spacing_and_layout": {
+    "philosophy": "Generous Spacing, Editorial Alignment. Treat whitespace as a luxury.",
+    "container_padding": "p-6 md:p-12 lg:p-16",
+    "grid_bento": "Asymmetrical grids for photo uploads. Instead of equal squares, use a primary large square and smaller supporting squares.",
+    "card_stack": "Tinder-style stack. Active card z-index 10. Background cards scale down (0.95, 0.9) and translate Y (16px, 32px). Absolute positioning within a relative container taking 70vh on desktop."
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#7C9E7E] text-white rounded-full px-8 py-4 font-medium hover:bg-[#6A8A6C] transition-colors",
+      "secondary": "bg-[#F0F0ED] text-[#1C1C1E] rounded-full px-8 py-4 font-medium hover:bg-[#E5E5E0] transition-colors",
+      "icon_action_heart": "w-16 h-16 rounded-full bg-white shadow-lg flex items-center justify-center text-[#C9908A] hover:scale-110 transition-transform",
+      "icon_action_dismiss": "w-16 h-16 rounded-full bg-white shadow-lg flex items-center justify-center text-[#1C1C1E] hover:scale-110 transition-transform"
+    },
+    "cards": {
+      "swipe_card": "bg-white rounded-[2rem] shadow-[0_20px_50px_rgba(28,28,30,0.08)] overflow-hidden border border-[#E5E5E0]/50"
+    },
+    "inputs": {
+      "vibe_input": "w-full bg-transparent border-b-2 border-[#E5E5E0] py-4 text-xl font-serif focus:outline-none focus:border-[#7C9E7E] placeholder:text-[#1C1C1E]/30 transition-colors resize-none"
+    }
+  },
+  "motion": {
+    "swipe_animation": "Use framer-motion drag='x' with dragConstraints. Animate rotate and opacity based on x offset.",
+    "page_transitions": "Fade and gentle upward slide (y: 20 -> 0) for new elements.",
+    "loading_state": "Editorial loading state: smooth pulsing opacity on a centered logo, with a cycling array of text ('Analyzing your vibe...', 'Steaming the fabrics...', 'Curating your look...')."
+  },
+  "media": {
+    "image_urls": {
+      "hero_fashion": {
+        "url": "https://images.unsplash.com/photo-1760551937420-f34b764b1256?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwZmFzaGlvbiUyMHdvbWFuJTIwb3V0Zml0fGVufDB8fHx8MTc3NjQ5NDM5MHww&ixlib=rb-4.1.0&q=85",
+        "description": "Minimalist fashion woman, used for landing page hero or onboarding visual."
+      },
+      "clothing_flatlay_1": {
+        "url": "https://images.unsplash.com/photo-1545590148-584b2278bb37?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwzfHxjbG90aGVzJTIwbGF5aW5nJTIwb24lMjBiZWR8ZW58MHx8fHwxNzc2NDk0Mzk0fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Clothes laying on bed, used for clothing upload examples."
+      },
+      "clothing_flatlay_2": {
+        "url": "https://images.unsplash.com/photo-1698586252650-f0d15ff0c8da?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwxfHxjbG90aGVzJTIwbGF5aW5nJTIwb24lMjBiZWR8ZW58MHx8fHwxNzc2NDk0Mzk0fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Pile of clothes, used for clothing upload examples."
+      },
+      "outfit_result_1": {
+        "url": "https://images.unsplash.com/photo-1768825197238-629b1ae2dc18?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwzfHxtaW5pbWFsaXN0JTIwZmFzaGlvbiUyMHdvbWFuJTIwb3V0Zml0fGVufDB8fHx8MTc3NjQ5NDM5MHww&ixlib=rb-4.1.0&q=85",
+        "description": "Fashion result image for swipe card 1."
+      },
+      "outfit_result_2": {
+        "url": "https://images.unsplash.com/photo-1513188447171-ecf00455f051?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwZmFzaGlvbiUyMHdvbWFuJTIwb3V0Zml0fGVufDB8fHx8MTc3NjQ5NDM5MHww&ixlib=rb-4.1.0&q=85",
+        "description": "Fashion result image for swipe card 2."
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "Install `framer-motion`, `lucide-react`, and update tailwind.config.js to include the custom colors and fonts (Playfair Display for serif, Inter for sans).",
+    "Set the global background to `#FAFAF8` and text to `#1C1C1E`.",
+    "Build the 3-step onboarding flow without complex routes if possible (just state transitions) to keep the SPA snappy. Steps: 1. Self Photo -> 2. Clothing Upload (Bento grid) -> 3. Vibe Input.",
+    "Implement the Tinder-style swipe interface using `framer-motion`'s `drag` properties. The active card is interactive, the cards behind it should have `scale: 0.95, y: 16` and `scale: 0.90, y: 32`.",
+    "The Swipe Card should contain: the generated image (taking up the top 60%), an explanation section 'Why It Works', and a row of small chips for the uploaded items used in the look.",
+    "Provide a 'Tweak Vibe' button that takes the user back to the vibe input step with their previous input pre-filled.",
+    "Add a 'Saved Looks' page showing a masonry or grid layout of outfits the user swiped right on.",
+    "Ensure the design remains 'clean, editorial, warm' — avoid techy borders, use soft shadows, large elegant typography, and generous whitespace.",
+    "Do NOT build Spotify integration, weather features, user accounts, social sharing, affiliate links, or Capsule Bridge.",
+    "All interactive elements MUST have a `data-testid`."
+  ]
+}
