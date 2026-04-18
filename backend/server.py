@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 import base64
 import json
+import hashlib
 from io import BytesIO
 from PIL import Image
 
@@ -121,6 +122,18 @@ def compress_image(image_bytes: bytes, max_size: int = 1024, quality: int = 85) 
     except Exception as e:
         logger.error(f"Error compressing image: {e}")
         return image_bytes
+
+
+def generate_cache_key(person_hash: str, outfit_title: str, items_used: List[int]) -> str:
+    """Generate a cache key from person photo hash + outfit signature"""
+    items_sorted = sorted(items_used)
+    signature = f"{person_hash}|{outfit_title}|{','.join(map(str, items_sorted))}"
+    return hashlib.md5(signature.encode()).hexdigest()
+
+
+def hash_image_bytes(image_bytes: bytes) -> str:
+    """Generate SHA256 hash of image bytes for identifying unique photos"""
+    return hashlib.sha256(image_bytes).hexdigest()[:16]
 
 
 # ============ Routes ============
@@ -311,11 +324,18 @@ The user's vibe/style goal is: "{vibe}"
 
 Please analyze these items and create 5 outfit combinations using ONLY these exact items. Consider color theory, silhouette balance, fabric weight, and occasion appropriateness.
 
+For each outfit:
+1. Check if it's AESTHETICALLY COHESIVE and MATCHES THE VIBE
+2. If the outfit could be improved with missing pieces, include a suggestion
+3. Be honest: if an outfit is just okay, say what would elevate it
+
 Return your response as a valid JSON array with exactly 5 objects. Each object must have:
 - "title": A catchy outfit name (string)
 - "items_used": Array of item indices (numbers from 0 to {len(clothing_data)-1}) used in this outfit - include shoes when suitable
 - "why_it_works": 2-3 sentences explaining why this combination works (string)
 - "vibe_match": How this outfit matches the requested vibe (string)
+- "aesthetic_score": Number 1-10 for how aesthetic/cohesive the outfit is
+- "suggestions": String with improvement suggestions IF any (e.g., "Add a belt to cinch the waist" or "A pair of white sneakers would elevate this look"). Empty string "" if no suggestions needed.
 
 IMPORTANT: Return ONLY the JSON array, no other text or explanation. Do not wrap in markdown code blocks."""
 
@@ -373,10 +393,14 @@ IMPORTANT: Return ONLY the JSON array, no other text or explanation. Do not wrap
 async def generate_outfit_image(
     person_image: UploadFile = File(...),
     outfit_description: str = Form(...),
-    clothing_images: List[UploadFile] = File(...)
+    clothing_images: List[UploadFile] = File(...),
+    outfit_title: str = Form(default=""),
+    items_used: str = Form(default="[]"),  # JSON string of indices
+    force_regenerate: bool = Form(default=False)
 ):
     """
     Generate an image of the person wearing the outfit using Gemini Nano Banana.
+    Uses caching based on person photo hash + outfit signature.
     """
     api_key = EMERGENT_LLM_KEY  # Nano Banana requires Emergent key
     if not api_key:
@@ -387,6 +411,27 @@ async def generate_outfit_image(
         person_content = await person_image.read()
         person_compressed = compress_image(person_content, max_size=1024, quality=85)
         person_b64 = image_to_base64(person_compressed)
+        person_hash = hash_image_bytes(person_compressed)
+        
+        # Parse items_used
+        try:
+            items_list = json.loads(items_used) if items_used else []
+        except json.JSONDecodeError:
+            items_list = []
+        
+        # Generate cache key
+        cache_key = generate_cache_key(person_hash, outfit_title, items_list)
+        
+        # Check cache unless force_regenerate is true
+        if not force_regenerate:
+            cached = await db.image_cache.find_one({"cache_key": cache_key}, {"_id": 0})
+            if cached:
+                logger.info(f"Cache hit for key: {cache_key}")
+                return {
+                    "success": True,
+                    "generated_image_url": cached["image_url"],
+                    "cached": True
+                }
         
         # Read and compress clothing images
         clothing_b64_list = []
@@ -442,11 +487,29 @@ Do NOT generate a different person. The person in the output MUST be the same pe
             data = img_data.get('data', '')
             image_url = f"data:{mime_type};base64,{data}"
             
+            # Save to cache
+            try:
+                await db.image_cache.update_one(
+                    {"cache_key": cache_key},
+                    {"$set": {
+                        "cache_key": cache_key,
+                        "image_url": image_url,
+                        "outfit_title": outfit_title,
+                        "items_used": items_list,
+                        "person_hash": person_hash,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    }},
+                    upsert=True
+                )
+                logger.info(f"Cached image with key: {cache_key}")
+            except Exception as cache_err:
+                logger.error(f"Failed to cache image: {cache_err}")
+            
             logger.info("Successfully generated outfit image")
             return {
                 "success": True,
                 "generated_image_url": image_url,
-                "text_response": text_response
+                "cached": False
             }
         else:
             logger.warning("No image generated by Nano Banana")

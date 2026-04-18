@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
-import { Heart, X, ArrowLeft, RefreshCw, Bookmark, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { Heart, X, ArrowLeft, RefreshCw, Bookmark, ChevronLeft, ChevronRight, Sparkles, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -50,8 +50,9 @@ const SwipePage = () => {
   }, [location.state, navigate]);
 
   // Generate outfit image - uses user's actual photo
-  const generateOutfitImage = useCallback(async (outfitIndex, outfit, personFile, clothFiles) => {
-    if (!outfit || !personFile || isGeneratingImage[outfitIndex] || generatedImages[outfitIndex]) return;
+  const generateOutfitImage = useCallback(async (outfitIndex, outfit, personFile, clothFiles, forceRegenerate = false) => {
+    if (!outfit || !personFile || isGeneratingImage[outfitIndex]) return;
+    if (!forceRegenerate && generatedImages[outfitIndex]) return;
     
     setIsGeneratingImage(prev => ({ ...prev, [outfitIndex]: true }));
     
@@ -59,6 +60,9 @@ const SwipePage = () => {
       const formData = new FormData();
       formData.append('person_image', personFile);
       formData.append('outfit_description', `${outfit.title}: ${outfit.why_it_works}`);
+      formData.append('outfit_title', outfit.title);
+      formData.append('items_used', JSON.stringify(outfit.items_used || []));
+      formData.append('force_regenerate', forceRegenerate.toString());
       
       const itemsUsed = outfit.items_used || [];
       if (clothFiles.length > 0) {
@@ -79,6 +83,9 @@ const SwipePage = () => {
           ...prev,
           [outfitIndex]: response.data.generated_image_url
         }));
+        if (response.data.cached) {
+          console.log(`Cache hit for outfit ${outfitIndex}`);
+        }
       } else {
         console.error(`Failed to generate image for outfit ${outfitIndex}:`, response.data.error);
       }
@@ -87,7 +94,21 @@ const SwipePage = () => {
     } finally {
       setIsGeneratingImage(prev => ({ ...prev, [outfitIndex]: false }));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isGeneratingImage, generatedImages]);
+
+  // Retry generation with force flag
+  const retryGeneration = async () => {
+    if (!currentOutfit || !selfPhotoFile) return;
+    // Clear the current image first
+    setGeneratedImages(prev => {
+      const updated = { ...prev };
+      delete updated[currentIndex];
+      return updated;
+    });
+    toast.info("Retrying image generation...");
+    await generateOutfitImage(currentIndex, currentOutfit, selfPhotoFile, clothingFiles, true);
+  };
 
   // Auto-generate images for all outfits when data is loaded
   useEffect(() => {
@@ -235,6 +256,40 @@ const SwipePage = () => {
         </button>
       </header>
 
+      {/* Batch generation progress */}
+      {outfits.length > 0 && (() => {
+        const generatedCount = Object.keys(generatedImages).length;
+        const totalCount = outfits.length;
+        const progressPercent = Math.round((generatedCount / totalCount) * 100);
+        const isBatchGenerating = Object.values(isGeneratingImage).some(v => v) || generatedCount < totalCount;
+        
+        if (!isBatchGenerating && generatedCount === totalCount) return null;
+        
+        return (
+          <div className="px-4 md:px-8 pb-2" data-testid="batch-progress">
+            <div className="max-w-lg mx-auto">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-medium text-[#1C1C1E]/60 flex items-center gap-1.5">
+                  <Sparkles className="w-3 h-3 text-[#7C9E7E]" />
+                  {generatedCount === totalCount 
+                    ? 'All outfits generated!' 
+                    : `Generating outfits... ${generatedCount}/${totalCount}`}
+                </span>
+                <span className="text-xs font-medium text-[#7C9E7E]">{progressPercent}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-[#E5E5E0] rounded-full overflow-hidden">
+                <motion.div 
+                  className="h-full bg-gradient-to-r from-[#7C9E7E] to-[#C9908A]"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progressPercent}%` }}
+                  transition={{ duration: 0.5 }}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Main swipe area */}
       <main className="flex-1 flex flex-col items-center justify-center px-4 pb-4 overflow-hidden">
         {/* Bigger card stack container - 85vh with max for larger images */}
@@ -285,11 +340,23 @@ const SwipePage = () => {
                 {/* Outfit image area - 80% of card for full body view */}
                 <div className="flex-[4] bg-gradient-to-br from-[#F0F0ED] to-[#E5E5E0] relative overflow-hidden">
                   {generatedImages[currentIndex] ? (
-                    <img 
-                      src={generatedImages[currentIndex]}
-                      alt="AI Generated outfit on you"
-                      className="w-full h-full object-cover"
-                    />
+                    <>
+                      <img 
+                        src={generatedImages[currentIndex]}
+                        alt="AI Generated outfit on you"
+                        className="w-full h-full object-cover"
+                      />
+                      {/* Retry button */}
+                      <button
+                        data-testid="retry-generation-btn"
+                        onClick={retryGeneration}
+                        disabled={isGeneratingImage[currentIndex]}
+                        className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm text-[#1C1C1E] px-3 py-2 rounded-full text-xs font-medium shadow-lg hover:bg-white transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingImage[currentIndex] ? 'animate-spin' : ''}`} />
+                        Regenerate
+                      </button>
+                    </>
                   ) : isGeneratingImage[currentIndex] ? (
                     <div className="w-full h-full relative flex items-center justify-center">
                       {selfPhoto && (
@@ -362,7 +429,16 @@ const SwipePage = () => {
                 {/* Outfit info - compact bottom section */}
                 <div className="p-4 bg-white shrink-0">
                   <div className="flex items-start justify-between gap-3 mb-2">
-                    <h3 className="font-serif text-lg text-[#1C1C1E] line-clamp-1 flex-1">{currentOutfit.title}</h3>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-serif text-lg text-[#1C1C1E] line-clamp-1">{currentOutfit.title}</h3>
+                        {currentOutfit.aesthetic_score && (
+                          <span className="shrink-0 text-xs bg-[#7C9E7E]/10 text-[#7C9E7E] px-2 py-0.5 rounded-full font-medium">
+                            {currentOutfit.aesthetic_score}/10
+                          </span>
+                        )}
+                      </div>
+                    </div>
                     {/* Item chips */}
                     <div className="flex gap-1.5 shrink-0">
                       {(currentOutfit.items_used || []).slice(0, 4).map((itemIdx, i) => (
@@ -384,6 +460,14 @@ const SwipePage = () => {
                   <p className="text-xs text-[#1C1C1E]/60 leading-relaxed line-clamp-2">
                     {currentOutfit.why_it_works}
                   </p>
+                  {currentOutfit.suggestions && currentOutfit.suggestions.trim() && (
+                    <div className="mt-2 pt-2 border-t border-[#E5E5E0]/60 flex items-start gap-1.5">
+                      <Lightbulb className="w-3.5 h-3.5 text-[#C9908A] shrink-0 mt-0.5" />
+                      <p className="text-xs text-[#1C1C1E]/70 line-clamp-2 italic">
+                        {currentOutfit.suggestions}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
