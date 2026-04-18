@@ -1,13 +1,13 @@
 # FitAI Product Requirements Document
 
-## Version: 1.0
-## Status: MVP Complete
+## Version: 1.1
+## Status: MVP Complete (Gemini Integration)
 ## Date: January 2026
 
 ---
 
 ## Overview
-FitAI is an AI-powered personal styling platform that generates outfit recommendations from clothes users already own. Users upload a photo of themselves and 3-5 clothing items, describe their style vibe, and receive AI-generated outfit combinations with explanations.
+FitAI is an AI-powered personal styling platform that generates outfit recommendations from clothes users already own. Users upload a photo of themselves and 3-5 clothing items, describe their style vibe, and receive AI-generated outfit combinations with explanations. The platform can also generate AI images showing the user wearing the suggested outfits.
 
 ---
 
@@ -40,9 +40,10 @@ FitAI is an AI-powered personal styling platform that generates outfit recommend
 - [x] Step 3: Vibe text input with quick suggestions
 - [x] Progress indicator
 - [x] "Style me" button activation when complete
+- [x] Image compression before upload for faster processing
 
-### AI Outfit Generation
-- [x] Claude claude-sonnet-4-20250514 integration
+### AI Outfit Generation (Gemini)
+- [x] Gemini 2.5 Flash integration via emergentintegrations
 - [x] Multimodal image + text analysis
 - [x] Returns 5 outfit combinations with:
   - Title
@@ -50,13 +51,19 @@ FitAI is an AI-powered personal styling platform that generates outfit recommend
   - Why it works (explanation)
   - Vibe match
 
+### AI Image Generation (Gemini Nano Banana)
+- [x] Gemini 3.1 Flash Image Preview integration
+- [x] Generates images of user wearing outfit
+- [x] "Generate AI Image" button on swipe cards
+- [x] Loading state during generation
+
 ### Swipe Interface
 - [x] Tinder-style card stack (70vh on desktop)
 - [x] Drag-to-swipe with framer-motion
 - [x] Save (heart) and Dismiss (X) buttons
 - [x] Keyboard arrow support
 - [x] Outfit card with:
-  - Image area (collage fallback)
+  - Generated image or collage fallback
   - Title and explanation
   - Item chips showing clothes used
 - [x] Card counter indicator
@@ -67,10 +74,7 @@ FitAI is an AI-powered personal styling platform that generates outfit recommend
 - [x] Empty state with CTA
 - [x] Delete functionality
 - [x] Vibe match tags
-
-### Virtual Try-On (Replicate IDM-VTON)
-- [x] API integration implemented
-- [x] Falls back to collage if API fails/slow
+- [x] Shows generated AI images when available
 
 ---
 
@@ -78,14 +82,17 @@ FitAI is an AI-powered personal styling platform that generates outfit recommend
 
 ### Backend (FastAPI)
 - `/api/` - Health check
-- `/api/generate-outfits` - Claude AI outfit generation
-- `/api/virtual-tryon` - Replicate IDM-VTON integration
+- `/api/generate-outfits` - Gemini AI outfit generation (multimodal)
+- `/api/generate-outfit-image` - Gemini Nano Banana image generation
 - `/api/saved-looks` - CRUD for saved looks (MongoDB)
+- Image compression with Pillow
 
 ### Frontend (React + Tailwind)
 - Landing page with editorial design
 - 3-step onboarding with image uploads
+- Client-side image compression utility
 - Swipe interface with framer-motion animations
+- Generate AI Image button for outfit visualization
 - Saved looks grid page
 - Sonner toast notifications
 
@@ -97,43 +104,24 @@ FitAI is an AI-powered personal styling platform that generates outfit recommend
 
 ---
 
-## Prioritized Backlog
-
-### P0 - Must Have (Completed)
-- [x] Landing page
-- [x] Onboarding flow
-- [x] AI outfit generation
-- [x] Swipe interface
-- [x] Saved looks
-
-### P1 - Should Have (Next Phase)
-- [ ] Virtual try-on image compositing (Replicate optimization)
-- [ ] Style prompt refinement without re-upload
-- [ ] Improved loading states with skeleton UI
-- [ ] Image optimization/compression
-
-### P2 - Nice to Have (Future)
-- [ ] User accounts and persistent profiles
-- [ ] Weather integration
-- [ ] Live trend lookup
-- [ ] Spotify/Apple Music vibe integration
-- [ ] Shareable outfit cards
-- [ ] Capsule Bridge analysis
-
----
-
 ## Technical Stack
 - Frontend: React 19, Tailwind CSS, framer-motion
 - Backend: FastAPI, Motor (MongoDB async)
 - Database: MongoDB
-- AI: Anthropic Claude claude-sonnet-4-20250514
-- Virtual Try-On: Replicate IDM-VTON
+- AI Text: Gemini 2.5 Flash (via emergentintegrations)
+- AI Image: Gemini 3.1 Flash Image Preview / Nano Banana (via emergentintegrations)
+
+---
+
+## API Keys Configured
+- GEMINI_API_KEY: User's own Gemini key
+- EMERGENT_LLM_KEY: For Nano Banana image generation
 
 ---
 
 ## Next Action Items
-1. Optimize virtual try-on latency and error handling
-2. Add image compression before upload
-3. Implement local storage caching for session persistence
-4. Add more vibe suggestions based on common patterns
-5. Consider premium tier for unlimited generations
+1. Test with real clothing photos to validate Gemini outfit suggestions
+2. Optimize Nano Banana image generation quality with better prompts
+3. Add image caching to avoid regenerating same outfits
+4. Consider adding outfit style tags for better organization
+5. Premium tier for unlimited image generations
