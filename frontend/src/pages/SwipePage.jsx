@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
 import { Heart, X, ArrowLeft, RefreshCw, Bookmark, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
@@ -24,6 +24,16 @@ const SwipePage = () => {
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [generatedImages, setGeneratedImages] = useState({});
   const [isGeneratingImage, setIsGeneratingImage] = useState({});
+  
+  const autoGenStarted = useRef(false);
+
+  // Motion values for drag animation
+  const x = useMotionValue(0);
+  const rotate = useTransform(x, [-200, 0, 200], [-15, 0, 15]);
+  const saveIndicatorOpacity = useTransform(x, [0, 100], [0, 1]);
+  const skipIndicatorOpacity = useTransform(x, [-100, 0], [1, 0]);
+
+  const currentOutfit = outfits[currentIndex];
 
   // Initialize from navigation state
   useEffect(() => {
@@ -39,34 +49,70 @@ const SwipePage = () => {
     }
   }, [location.state, navigate]);
 
-  // Motion values for drag animation - must be at top level, not conditional
-  const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 0, 200], [-15, 0, 15]);
-  const opacity = useTransform(x, [-200, -100, 0, 100, 200], [0.5, 1, 1, 1, 0.5]);
-  const saveIndicatorOpacity = useTransform(x, [0, 100], [0, 1]);
-  const skipIndicatorOpacity = useTransform(x, [-100, 0], [1, 0]);
-
-  const currentOutfit = outfits[currentIndex];
-
-  const handleSwipe = useCallback((dir) => {
-    if (!currentOutfit) return;
+  // Generate outfit image - uses user's actual photo
+  const generateOutfitImage = useCallback(async (outfitIndex, outfit, personFile, clothFiles) => {
+    if (!outfit || !personFile || isGeneratingImage[outfitIndex] || generatedImages[outfitIndex]) return;
     
-    setDirection(dir);
+    setIsGeneratingImage(prev => ({ ...prev, [outfitIndex]: true }));
     
-    if (dir === 1) {
-      // Liked - save the look
-      saveLook(currentOutfit);
-    }
-    
-    setTimeout(() => {
-      if (currentIndex < outfits.length - 1) {
-        setCurrentIndex(prev => prev + 1);
-      } else {
-        toast.info("You've seen all outfits! Try tweaking your vibe for more.");
+    try {
+      const formData = new FormData();
+      formData.append('person_image', personFile);
+      formData.append('outfit_description', `${outfit.title}: ${outfit.why_it_works}`);
+      
+      const itemsUsed = outfit.items_used || [];
+      if (clothFiles.length > 0) {
+        itemsUsed.forEach(idx => {
+          if (clothFiles[idx]) {
+            formData.append('clothing_images', clothFiles[idx]);
+          }
+        });
       }
-      setDirection(0);
-    }, 300);
-  }, [currentOutfit, currentIndex, outfits.length]);
+      
+      const response = await axios.post(`${API}/generate-outfit-image`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 180000
+      });
+      
+      if (response.data.success && response.data.generated_image_url) {
+        setGeneratedImages(prev => ({
+          ...prev,
+          [outfitIndex]: response.data.generated_image_url
+        }));
+      } else {
+        console.error(`Failed to generate image for outfit ${outfitIndex}:`, response.data.error);
+      }
+    } catch (error) {
+      console.error(`Error generating outfit ${outfitIndex}:`, error);
+    } finally {
+      setIsGeneratingImage(prev => ({ ...prev, [outfitIndex]: false }));
+    }
+  }, [isGeneratingImage, generatedImages]);
+
+  // Auto-generate images for all outfits when data is loaded
+  useEffect(() => {
+    if (
+      location.state?.autoGenerate &&
+      outfits.length > 0 &&
+      selfPhotoFile &&
+      clothingFiles.length > 0 &&
+      !autoGenStarted.current
+    ) {
+      autoGenStarted.current = true;
+      toast.info("Generating your outfit images...");
+      
+      // Generate images sequentially to avoid API rate limits
+      const generateSequentially = async () => {
+        for (let i = 0; i < outfits.length; i++) {
+          await generateOutfitImage(i, outfits[i], selfPhotoFile, clothingFiles);
+        }
+        toast.success("All outfit images generated!");
+      };
+      
+      generateSequentially();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outfits, selfPhotoFile, clothingFiles]);
 
   const saveLook = async (outfit) => {
     try {
@@ -94,50 +140,25 @@ const SwipePage = () => {
     }
   };
 
-  // Generate outfit image using Nano Banana
-  const generateOutfitImage = async (outfitIndex) => {
-    const outfit = outfits[outfitIndex];
-    if (!outfit || !selfPhotoFile || isGeneratingImage[outfitIndex]) return;
+  const handleSwipe = useCallback((dir) => {
+    if (!currentOutfit) return;
     
-    setIsGeneratingImage(prev => ({ ...prev, [outfitIndex]: true }));
-    toast.info("Generating outfit image with AI...");
+    setDirection(dir);
     
-    try {
-      const formData = new FormData();
-      formData.append('person_image', selfPhotoFile);
-      formData.append('outfit_description', `${outfit.title}: ${outfit.why_it_works}`);
-      
-      // Add the clothing items used in this outfit
-      const itemsUsed = outfit.items_used || [];
-      if (clothingFiles.length > 0) {
-        itemsUsed.forEach(idx => {
-          if (clothingFiles[idx]) {
-            formData.append('clothing_images', clothingFiles[idx]);
-          }
-        });
-      }
-      
-      const response = await axios.post(`${API}/generate-outfit-image`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000
-      });
-      
-      if (response.data.success && response.data.generated_image_url) {
-        setGeneratedImages(prev => ({
-          ...prev,
-          [outfitIndex]: response.data.generated_image_url
-        }));
-        toast.success("Outfit image generated!");
-      } else {
-        toast.error(response.data.error || "Failed to generate image");
-      }
-    } catch (error) {
-      console.error("Error generating outfit image:", error);
-      toast.error("Failed to generate outfit image");
-    } finally {
-      setIsGeneratingImage(prev => ({ ...prev, [outfitIndex]: false }));
+    if (dir === 1) {
+      saveLook(currentOutfit);
     }
-  };
+    
+    setTimeout(() => {
+      if (currentIndex < outfits.length - 1) {
+        setCurrentIndex(prev => prev + 1);
+      } else {
+        toast.info("You've seen all outfits! Try tweaking your vibe for more.");
+      }
+      setDirection(0);
+    }, 300);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentOutfit, currentIndex, outfits.length]);
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === "ArrowLeft") {
@@ -156,13 +177,9 @@ const SwipePage = () => {
     if (!tweakVibe.trim()) return;
     
     setIsRegenerating(true);
-    
-    // Navigate back to onboarding with prefilled vibe
     navigate("/onboarding", {
       state: {
         prefillVibe: `${currentVibe}. ${tweakVibe}`,
-        selfPhoto,
-        clothingPreviews
       }
     });
   };
@@ -220,8 +237,8 @@ const SwipePage = () => {
 
       {/* Main swipe area */}
       <main className="flex-1 flex flex-col items-center justify-center px-4 pb-4 overflow-hidden">
-        {/* Card stack container */}
-        <div className="relative w-full max-w-md h-[70vh] max-h-[600px]">
+        {/* Bigger card stack container - 85vh with max for larger images */}
+        <div className="relative w-full max-w-lg h-[82vh] max-h-[800px]">
           {/* Background cards */}
           {outfits.slice(currentIndex + 1, currentIndex + 3).map((_, stackIndex) => (
             <div
@@ -265,24 +282,41 @@ const SwipePage = () => {
                 className="absolute inset-0 swipe-card cursor-grab active:cursor-grabbing flex flex-col"
                 data-testid="swipe-card"
               >
-                {/* Outfit image area */}
-                <div className="flex-1 bg-gradient-to-br from-[#F0F0ED] to-[#E5E5E0] relative overflow-hidden">
+                {/* Outfit image area - 80% of card for full body view */}
+                <div className="flex-[4] bg-gradient-to-br from-[#F0F0ED] to-[#E5E5E0] relative overflow-hidden">
                   {generatedImages[currentIndex] ? (
                     <img 
                       src={generatedImages[currentIndex]}
-                      alt="AI Generated outfit"
+                      alt="AI Generated outfit on you"
                       className="w-full h-full object-cover"
                     />
+                  ) : isGeneratingImage[currentIndex] ? (
+                    <div className="w-full h-full relative flex items-center justify-center">
+                      {selfPhoto && (
+                        <img 
+                          src={selfPhoto}
+                          alt="Your photo"
+                          className="absolute inset-0 w-full h-full object-cover opacity-20 blur-sm"
+                        />
+                      )}
+                      <div className="relative text-center z-10">
+                        <div className="w-16 h-16 bg-white/90 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                          <Sparkles className="w-8 h-8 text-[#7C9E7E] animate-pulse" />
+                        </div>
+                        <p className="text-[#1C1C1E] font-medium bg-white/90 backdrop-blur-sm rounded-full px-4 py-2 inline-block">
+                          Generating your fit...
+                        </p>
+                      </div>
+                    </div>
                   ) : selfPhoto ? (
                     <div className="w-full h-full relative">
                       <img 
                         src={selfPhoto}
                         alt="Your photo"
-                        className="w-full h-full object-cover opacity-30"
+                        className="w-full h-full object-cover opacity-40"
                       />
-                      {/* Collage overlay */}
                       <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="grid grid-cols-2 gap-2 p-4 max-w-[80%]">
+                        <div className="grid grid-cols-2 gap-2 p-4 max-w-[70%]">
                           {(currentOutfit.items_used || []).slice(0, 4).map((itemIdx, i) => (
                             clothingPreviews[itemIdx] && (
                               <div key={i} className="aspect-square rounded-xl overflow-hidden shadow-lg bg-white">
@@ -296,29 +330,12 @@ const SwipePage = () => {
                           ))}
                         </div>
                       </div>
-                      {/* Generate AI Image button */}
-                      {selfPhotoFile && clothingFiles.length > 0 && !isGeneratingImage[currentIndex] && (
-                        <button
-                          data-testid="generate-image-btn"
-                          onClick={() => generateOutfitImage(currentIndex)}
-                          className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-[#7C9E7E] text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg hover:bg-[#6A8A6C] transition-colors flex items-center gap-2"
-                        >
-                          <Sparkles className="w-4 h-4" />
-                          Generate AI Image
-                        </button>
-                      )}
-                      {isGeneratingImage[currentIndex] && (
-                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium shadow-lg flex items-center gap-2">
-                          <div className="w-4 h-4 border-2 border-[#7C9E7E] border-t-transparent rounded-full animate-spin" />
-                          Generating...
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
                       <p className="text-[#1C1C1E]/40">Outfit visualization</p>
                     </div>
-                  )}}
+                  )}
                   
                   {/* Card number indicator */}
                   <div className="absolute top-4 right-4 bg-white/80 backdrop-blur-sm rounded-full px-3 py-1">
@@ -336,88 +353,89 @@ const SwipePage = () => {
                   </motion.div>
                   <motion.div 
                     style={{ opacity: skipIndicatorOpacity }}
-                    className="absolute top-4 right-4 bg-[#1C1C1E]/60 text-white rounded-full px-4 py-2 font-medium"
+                    className="absolute top-4 right-16 bg-[#1C1C1E]/60 text-white rounded-full px-4 py-2 font-medium"
                   >
                     SKIP
                   </motion.div>
                 </div>
 
-                {/* Outfit info */}
-                <div className="p-5 bg-white">
-                  <h3 className="font-serif text-xl text-[#1C1C1E] mb-2">{currentOutfit.title}</h3>
-                  <p className="text-sm text-[#1C1C1E]/60 leading-relaxed mb-4 line-clamp-2">
+                {/* Outfit info - compact bottom section */}
+                <div className="p-4 bg-white shrink-0">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <h3 className="font-serif text-lg text-[#1C1C1E] line-clamp-1 flex-1">{currentOutfit.title}</h3>
+                    {/* Item chips */}
+                    <div className="flex gap-1.5 shrink-0">
+                      {(currentOutfit.items_used || []).slice(0, 4).map((itemIdx, i) => (
+                        clothingPreviews[itemIdx] && (
+                          <div 
+                            key={i}
+                            className="w-7 h-7 rounded-md overflow-hidden border border-[#E5E5E0]"
+                          >
+                            <img 
+                              src={clothingPreviews[itemIdx]}
+                              alt={`Item ${itemIdx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-xs text-[#1C1C1E]/60 leading-relaxed line-clamp-2">
                     {currentOutfit.why_it_works}
                   </p>
-                  
-                  {/* Item chips */}
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    {(currentOutfit.items_used || []).map((itemIdx, i) => (
-                      clothingPreviews[itemIdx] && (
-                        <div 
-                          key={i}
-                          className="w-10 h-10 shrink-0 rounded-lg overflow-hidden border border-[#E5E5E0]"
-                        >
-                          <img 
-                            src={clothingPreviews[itemIdx]}
-                            alt={`Item ${itemIdx + 1}`}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                      )
-                    ))}
-                  </div>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* Action buttons */}
-        <div className="flex items-center justify-center gap-6 mt-6">
+        {/* Action buttons - compact */}
+        <div className="flex items-center justify-center gap-4 mt-4">
           <button
             data-testid="dismiss-btn"
             onClick={() => handleSwipe(-1)}
-            className="w-16 h-16 rounded-full bg-white shadow-lg flex items-center justify-center text-[#1C1C1E] hover:scale-110 transition-transform active:scale-95"
+            className="w-14 h-14 rounded-full bg-white shadow-lg flex items-center justify-center text-[#1C1C1E] hover:scale-110 transition-transform active:scale-95"
           >
-            <X className="w-7 h-7" />
+            <X className="w-6 h-6" />
           </button>
           
           <button
             data-testid="prev-btn"
             onClick={() => goToOutfit(currentIndex - 1)}
             disabled={currentIndex === 0}
-            className="w-12 h-12 rounded-full bg-white shadow-md flex items-center justify-center text-[#1C1C1E]/60 hover:text-[#1C1C1E] disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            className="w-10 h-10 rounded-full bg-white shadow-md flex items-center justify-center text-[#1C1C1E]/60 hover:text-[#1C1C1E] disabled:opacity-30 disabled:cursor-not-allowed transition-all"
           >
-            <ChevronLeft className="w-5 h-5" />
+            <ChevronLeft className="w-4 h-4" />
           </button>
           
           <button
             data-testid="next-btn"
             onClick={() => goToOutfit(currentIndex + 1)}
             disabled={currentIndex === outfits.length - 1}
-            className="w-12 h-12 rounded-full bg-white shadow-md flex items-center justify-center text-[#1C1C1E]/60 hover:text-[#1C1C1E] disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            className="w-10 h-10 rounded-full bg-white shadow-md flex items-center justify-center text-[#1C1C1E]/60 hover:text-[#1C1C1E] disabled:opacity-30 disabled:cursor-not-allowed transition-all"
           >
-            <ChevronRight className="w-5 h-5" />
+            <ChevronRight className="w-4 h-4" />
           </button>
           
           <button
             data-testid="save-btn"
             onClick={() => handleSwipe(1)}
-            className="w-16 h-16 rounded-full bg-white shadow-lg flex items-center justify-center text-[#C9908A] hover:scale-110 transition-transform active:scale-95"
+            className="w-14 h-14 rounded-full bg-white shadow-lg flex items-center justify-center text-[#C9908A] hover:scale-110 transition-transform active:scale-95"
           >
-            <Heart className="w-7 h-7" fill="currentColor" />
+            <Heart className="w-6 h-6" fill="currentColor" />
           </button>
         </div>
 
         {/* Tweak vibe section */}
-        <div className="w-full max-w-md mt-6">
+        <div className="w-full max-w-lg mt-3">
           <div className="flex gap-2">
             <Input
               data-testid="tweak-vibe-input"
               value={tweakVibe}
               onChange={(e) => setTweakVibe(e.target.value)}
-              placeholder="Tweak the vibe... (e.g. make it more relaxed)"
-              className="flex-1 bg-white border-[#E5E5E0] rounded-full px-5 py-3 focus:border-[#7C9E7E] focus:ring-[#7C9E7E]"
+              placeholder="Tweak the vibe..."
+              className="flex-1 bg-white border-[#E5E5E0] rounded-full px-4 py-2 text-sm focus:border-[#7C9E7E] focus:ring-[#7C9E7E]"
             />
             <Button
               data-testid="regenerate-btn"
@@ -431,15 +449,17 @@ const SwipePage = () => {
         </div>
 
         {/* Outfit dots indicator */}
-        <div className="flex gap-2 mt-4">
+        <div className="flex gap-2 mt-3">
           {outfits.map((_, i) => (
             <button
               key={i}
               onClick={() => goToOutfit(i)}
-              className={`w-2 h-2 rounded-full transition-all ${
+              className={`h-2 rounded-full transition-all ${
                 i === currentIndex 
-                  ? 'bg-[#7C9E7E] w-4' 
-                  : 'bg-[#E5E5E0] hover:bg-[#C9908A]'
+                  ? 'bg-[#7C9E7E] w-6' 
+                  : generatedImages[i] 
+                    ? 'bg-[#C9908A] w-2'
+                    : 'bg-[#E5E5E0] w-2 hover:bg-[#C9908A]'
               }`}
             />
           ))}

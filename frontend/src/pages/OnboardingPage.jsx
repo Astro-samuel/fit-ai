@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, Camera, X, ArrowRight, ArrowLeft, Sparkles, Check, Plus, AlertCircle } from "lucide-react";
+import { Upload, Camera, X, ArrowRight, ArrowLeft, Sparkles, Check, Plus, AlertCircle, Footprints } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
@@ -18,12 +18,15 @@ const OnboardingPage = () => {
   const [photoValidation, setPhotoValidation] = useState(null);
   const [clothingItems, setClothingItems] = useState([]);
   const [clothingFiles, setClothingFiles] = useState([]);
+  const [shoeItems, setShoeItems] = useState([]);
+  const [shoeFiles, setShoeFiles] = useState([]);
   const [vibe, setVibe] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
   
   const selfPhotoInputRef = useRef(null);
   const clothingInputRef = useRef(null);
+  const shoeInputRef = useRef(null);
 
   const loadingMessages = [
     "Analyzing your vibe...",
@@ -49,16 +52,18 @@ const OnboardingPage = () => {
       setPhotoValidation(response.data);
       
       if (!response.data.valid) {
-        toast.warning(response.data.feedback || "Please upload a full-body photo");
+        toast.error(response.data.feedback || "Please upload a full-body photo showing your entire body from head to feet");
+        // Clear the photo since it's not valid
+        setSelfPhoto(null);
+        setSelfPhotoFile(null);
+        return false;
       } else {
-        toast.success(response.data.feedback || "Great photo!");
+        toast.success(response.data.feedback || "Great full-body photo!");
+        return true;
       }
-      
-      return response.data.valid;
     } catch (error) {
       console.error("Photo validation error:", error);
-      // On error, allow the photo but show a warning
-      toast.info("Photo validation skipped - please ensure your full body is visible");
+      toast.info("Photo validation skipped");
       setPhotoValidation({ valid: true, feedback: "Validation skipped" });
       return true;
     } finally {
@@ -81,7 +86,7 @@ const OnboardingPage = () => {
       };
       reader.readAsDataURL(file);
       
-      // Validate the photo for full body
+      // Validate - will clear photo if not full body
       await validateFullBodyPhoto(file);
     }
   }, []);
@@ -110,14 +115,50 @@ const OnboardingPage = () => {
     }
   }, [clothingItems.length]);
 
+  const handleShoeUpload = useCallback((e) => {
+    const files = Array.from(e.target.files || []);
+    const remainingSlots = 3 - shoeItems.length;
+    const filesToAdd = files.slice(0, remainingSlots);
+    
+    filesToAdd.forEach((file) => {
+      if (!file.type.startsWith('image/')) {
+        toast.error(`${file.name} is not an image file`);
+        return;
+      }
+      
+      setShoeFiles(prev => [...prev, file]);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setShoeItems(prev => [...prev, e.target?.result]);
+      };
+      reader.readAsDataURL(file);
+    });
+    
+    if (files.length > remainingSlots) {
+      toast.info(`Only ${remainingSlots} more shoes can be added (max 3)`);
+    }
+  }, [shoeItems.length]);
+
   const removeClothingItem = useCallback((index) => {
     setClothingItems(prev => prev.filter((_, i) => i !== index));
     setClothingFiles(prev => prev.filter((_, i) => i !== index));
   }, []);
 
+  const removeShoeItem = useCallback((index) => {
+    setShoeItems(prev => prev.filter((_, i) => i !== index));
+    setShoeFiles(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
   const handleStyleMe = async () => {
     if (!selfPhotoFile || clothingFiles.length < 3 || !vibe.trim()) {
       toast.error("Please complete all steps before generating outfits");
+      return;
+    }
+
+    // Double-check validation status
+    if (photoValidation && !photoValidation.valid) {
+      toast.error("Please upload a full-body photo first");
+      setStep(1);
       return;
     }
 
@@ -131,16 +172,24 @@ const OnboardingPage = () => {
     }, 3000);
 
     try {
-      // Compress images before upload for faster processing
       toast.info("Compressing images...");
       const compressedClothingFiles = await compressImages(clothingFiles, 800, 0.8);
+      const compressedShoeFiles = shoeFiles.length > 0 ? await compressImages(shoeFiles, 800, 0.8) : [];
       const compressedSelfPhoto = await compressImage(selfPhotoFile, 1024, 0.85);
       
       const formData = new FormData();
       formData.append('vibe', vibe);
+      
+      // Send clothing + shoes as combined list, but send count info
       compressedClothingFiles.forEach((file) => {
         formData.append('clothing_images', file);
       });
+      compressedShoeFiles.forEach((file) => {
+        formData.append('clothing_images', file);
+      });
+      
+      formData.append('num_clothing', compressedClothingFiles.length.toString());
+      formData.append('num_shoes', compressedShoeFiles.length.toString());
 
       const response = await axios.post(`${API}/generate-outfits`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -149,15 +198,19 @@ const OnboardingPage = () => {
 
       clearInterval(messageInterval);
       
-      // Navigate to swipe page with data including compressed self photo
+      const allFiles = [...compressedClothingFiles, ...compressedShoeFiles];
+      
       navigate('/swipe', { 
         state: { 
           outfits: response.data.outfits,
           clothingPreviews: response.data.clothing_previews,
           selfPhoto: selfPhoto,
           selfPhotoFile: compressedSelfPhoto,
-          clothingFiles: compressedClothingFiles,
-          vibe: vibe
+          clothingFiles: allFiles,
+          numClothing: compressedClothingFiles.length,
+          numShoes: compressedShoeFiles.length,
+          vibe: vibe,
+          autoGenerate: true  // Flag to auto-generate images on swipe page
         }
       });
       
@@ -169,7 +222,7 @@ const OnboardingPage = () => {
     }
   };
 
-  const canProceedToStep2 = selfPhoto !== null;
+  const canProceedToStep2 = selfPhoto !== null && photoValidation?.valid;
   const canProceedToStep3 = clothingItems.length >= 3;
   const canStyleMe = canProceedToStep2 && canProceedToStep3 && vibe.trim().length > 0;
 
@@ -182,7 +235,6 @@ const OnboardingPage = () => {
           animate={{ opacity: 1, scale: 1 }}
           className="text-center"
         >
-          {/* Animated card */}
           <motion.div
             animate={{ y: [0, -10, 0] }}
             transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
@@ -215,7 +267,6 @@ const OnboardingPage = () => {
 
   return (
     <div className="min-h-screen bg-[#FAFAF8] flex flex-col">
-      {/* Header */}
       <header className="w-full px-6 md:px-12 lg:px-16 py-6 flex items-center justify-between">
         <button
           data-testid="back-to-home"
@@ -226,7 +277,7 @@ const OnboardingPage = () => {
           <span className="text-sm">Back</span>
         </button>
         <span className="font-serif text-xl tracking-tight text-[#1C1C1E]">FitAI</span>
-        <div className="w-16" /> {/* Spacer */}
+        <div className="w-16" />
       </header>
 
       {/* Progress indicator */}
@@ -251,7 +302,6 @@ const OnboardingPage = () => {
         </div>
       </div>
 
-      {/* Main content */}
       <main className="flex-1 px-6 md:px-12 lg:px-16 pb-8 max-w-4xl mx-auto w-full">
         <AnimatePresence mode="wait">
           {/* Step 1: Self Photo */}
@@ -271,7 +321,7 @@ const OnboardingPage = () => {
                   Upload a photo of yourself
                 </h2>
                 <p className="text-[#1C1C1E]/60 text-sm">
-                  Full body works best • Plain background preferred
+                  <strong>Full body required</strong> • Head to feet visible • Plain background preferred
                 </p>
               </div>
 
@@ -279,7 +329,7 @@ const OnboardingPage = () => {
                 data-testid="self-photo-upload"
                 onClick={() => selfPhotoInputRef.current?.click()}
                 className={`upload-zone rounded-[2rem] p-8 cursor-pointer transition-all ${
-                  selfPhoto ? 'border-[#7C9E7E] bg-[#7C9E7E]/5' : ''
+                  selfPhoto && photoValidation?.valid ? 'border-[#7C9E7E] bg-[#7C9E7E]/5' : ''
                 }`}
               >
                 <input
@@ -310,34 +360,23 @@ const OnboardingPage = () => {
                       <X className="w-4 h-4 text-[#1C1C1E]" />
                     </button>
                     
-                    {/* Validation status */}
-                    <div className="absolute bottom-2 left-2 right-2 bg-white/90 rounded-lg px-3 py-2 text-center">
+                    <div className="absolute bottom-2 left-2 right-2 bg-white/95 rounded-lg px-3 py-2 text-center">
                       {isValidatingPhoto ? (
                         <p className="text-sm text-[#1C1C1E]/60 font-medium flex items-center justify-center gap-2">
-                          <div className="w-4 h-4 border-2 border-[#7C9E7E] border-t-transparent rounded-full animate-spin" />
+                          <span className="w-4 h-4 border-2 border-[#7C9E7E] border-t-transparent rounded-full animate-spin" />
                           Checking full body...
                         </p>
-                      ) : photoValidation ? (
-                        <p className={`text-sm font-medium flex items-center justify-center gap-2 ${
-                          photoValidation.valid ? 'text-[#7C9E7E]' : 'text-[#C9908A]'
-                        }`}>
-                          {photoValidation.valid ? (
-                            <>
-                              <Check className="w-4 h-4" /> 
-                              {photoValidation.feedback || "Full body visible!"}
-                            </>
-                          ) : (
-                            <>
-                              <AlertCircle className="w-4 h-4" />
-                              {photoValidation.feedback || "Please show full body"}
-                            </>
-                          )}
-                        </p>
-                      ) : (
+                      ) : photoValidation?.valid ? (
                         <p className="text-sm text-[#7C9E7E] font-medium flex items-center justify-center gap-2">
-                          <Check className="w-4 h-4" /> Photo uploaded
+                          <Check className="w-4 h-4" /> 
+                          Full body verified
                         </p>
-                      )}
+                      ) : photoValidation && !photoValidation.valid ? (
+                        <p className="text-sm text-[#C9908A] font-medium flex items-center justify-center gap-2">
+                          <AlertCircle className="w-4 h-4" />
+                          Not a full-body photo
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                 ) : (
@@ -346,10 +385,19 @@ const OnboardingPage = () => {
                       <Camera className="w-8 h-8 text-[#7C9E7E]" />
                     </div>
                     <p className="text-[#1C1C1E] font-medium mb-2">Click to upload your photo</p>
-                    <p className="text-sm text-[#1C1C1E]/50">or drag and drop</p>
+                    <p className="text-sm text-[#1C1C1E]/50">Full body photo required (head to feet)</p>
                   </div>
                 )}
               </div>
+
+              {photoValidation && !photoValidation.valid && (
+                <div className="bg-[#C9908A]/10 border border-[#C9908A]/30 rounded-2xl p-4 text-center">
+                  <AlertCircle className="w-5 h-5 text-[#C9908A] mx-auto mb-2" />
+                  <p className="text-sm text-[#1C1C1E]/80">
+                    {photoValidation.feedback || "Please upload a photo showing your full body from head to feet"}
+                  </p>
+                </div>
+              )}
 
               <div className="flex justify-end pt-4">
                 <Button
@@ -365,16 +413,16 @@ const OnboardingPage = () => {
             </motion.div>
           )}
 
-          {/* Step 2: Clothing Items */}
+          {/* Step 2: Clothing Items + Shoes */}
           {step === 2 && (
             <motion.div
               key="step2"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="space-y-6"
+              className="space-y-8"
             >
-              <div className="text-center mb-8">
+              <div className="text-center mb-4">
                 <p className="text-xs font-sans uppercase tracking-[0.2em] text-[#7C9E7E] font-medium mb-3">
                   Step 2 of 3
                 </p>
@@ -382,57 +430,114 @@ const OnboardingPage = () => {
                   Now add your clothes
                 </h2>
                 <p className="text-[#1C1C1E]/60 text-sm">
-                  Upload 3-5 items • One garment per photo
+                  3-5 clothing items + optional shoes • One item per photo
                 </p>
               </div>
 
-              {/* Clothing grid */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {clothingItems.map((item, index) => (
-                  <div key={index} className="relative aspect-square">
-                    <img 
-                      src={item} 
-                      alt={`Clothing item ${index + 1}`}
-                      className="w-full h-full object-cover rounded-2xl border border-[#E5E5E0]"
-                    />
-                    <button
-                      data-testid={`remove-clothing-${index}`}
-                      onClick={() => removeClothingItem(index)}
-                      className="absolute top-2 right-2 w-7 h-7 bg-white/90 rounded-full flex items-center justify-center shadow-lg hover:bg-white transition-colors"
-                    >
-                      <X className="w-3.5 h-3.5 text-[#1C1C1E]" />
-                    </button>
-                    <div className="absolute bottom-2 left-2 bg-white/90 rounded-lg px-2 py-1">
-                      <span className="text-xs font-medium text-[#1C1C1E]">Item {index + 1}</span>
-                    </div>
-                  </div>
-                ))}
+              {/* Clothing section */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-serif text-lg text-[#1C1C1E]">Clothing Items</h3>
+                  <span className={`text-sm ${clothingItems.length >= 3 ? 'text-[#7C9E7E]' : 'text-[#1C1C1E]/50'}`}>
+                    {clothingItems.length}/5 {clothingItems.length < 3 && '(min 3)'}
+                  </span>
+                </div>
                 
-                {clothingItems.length < 5 && (
-                  <div
-                    data-testid="clothing-upload"
-                    onClick={() => clothingInputRef.current?.click()}
-                    className="upload-zone aspect-square rounded-2xl cursor-pointer flex flex-col items-center justify-center"
-                  >
-                    <input
-                      ref={clothingInputRef}
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={handleClothingUpload}
-                      className="hidden"
-                    />
-                    <Plus className="w-8 h-8 text-[#7C9E7E] mb-2" />
-                    <span className="text-sm text-[#1C1C1E]/60">Add item</span>
-                  </div>
-                )}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {clothingItems.map((item, index) => (
+                    <div key={index} className="relative aspect-square">
+                      <img 
+                        src={item} 
+                        alt={`Clothing item ${index + 1}`}
+                        className="w-full h-full object-cover rounded-2xl border border-[#E5E5E0]"
+                      />
+                      <button
+                        data-testid={`remove-clothing-${index}`}
+                        onClick={() => removeClothingItem(index)}
+                        className="absolute top-2 right-2 w-7 h-7 bg-white/90 rounded-full flex items-center justify-center shadow-lg hover:bg-white transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5 text-[#1C1C1E]" />
+                      </button>
+                      <div className="absolute bottom-2 left-2 bg-white/90 rounded-lg px-2 py-1">
+                        <span className="text-xs font-medium text-[#1C1C1E]">Item {index + 1}</span>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {clothingItems.length < 5 && (
+                    <div
+                      data-testid="clothing-upload"
+                      onClick={() => clothingInputRef.current?.click()}
+                      className="upload-zone aspect-square rounded-2xl cursor-pointer flex flex-col items-center justify-center"
+                    >
+                      <input
+                        ref={clothingInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleClothingUpload}
+                        className="hidden"
+                      />
+                      <Plus className="w-8 h-8 text-[#7C9E7E] mb-2" />
+                      <span className="text-sm text-[#1C1C1E]/60">Add clothing</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="text-center">
-                <p className={`text-sm ${clothingItems.length >= 3 ? 'text-[#7C9E7E]' : 'text-[#1C1C1E]/50'}`}>
-                  {clothingItems.length}/5 items uploaded
-                  {clothingItems.length < 3 && ` (minimum 3 required)`}
-                </p>
+              {/* Shoes section */}
+              <div className="space-y-3 pt-4 border-t border-[#E5E5E0]">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Footprints className="w-5 h-5 text-[#C9908A]" />
+                    <h3 className="font-serif text-lg text-[#1C1C1E]">Shoes</h3>
+                    <span className="text-xs text-[#1C1C1E]/40 uppercase tracking-wider">Optional</span>
+                  </div>
+                  <span className="text-sm text-[#1C1C1E]/50">
+                    {shoeItems.length}/3
+                  </span>
+                </div>
+                
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {shoeItems.map((item, index) => (
+                    <div key={index} className="relative aspect-square">
+                      <img 
+                        src={item} 
+                        alt={`Shoe ${index + 1}`}
+                        className="w-full h-full object-cover rounded-2xl border border-[#E5E5E0]"
+                      />
+                      <button
+                        data-testid={`remove-shoe-${index}`}
+                        onClick={() => removeShoeItem(index)}
+                        className="absolute top-2 right-2 w-7 h-7 bg-white/90 rounded-full flex items-center justify-center shadow-lg hover:bg-white transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5 text-[#1C1C1E]" />
+                      </button>
+                      <div className="absolute bottom-2 left-2 bg-[#C9908A]/90 rounded-lg px-2 py-1">
+                        <span className="text-xs font-medium text-white">Shoe {index + 1}</span>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {shoeItems.length < 3 && (
+                    <div
+                      data-testid="shoe-upload"
+                      onClick={() => shoeInputRef.current?.click()}
+                      className="upload-zone aspect-square rounded-2xl cursor-pointer flex flex-col items-center justify-center"
+                    >
+                      <input
+                        ref={shoeInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleShoeUpload}
+                        className="hidden"
+                      />
+                      <Footprints className="w-8 h-8 text-[#C9908A] mb-2" />
+                      <span className="text-sm text-[#1C1C1E]/60">Add shoes</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex justify-between pt-4">
@@ -488,7 +593,6 @@ const OnboardingPage = () => {
                   className="w-full bg-transparent border-2 border-[#E5E5E0] rounded-2xl py-6 px-6 text-lg font-serif focus:outline-none focus:border-[#7C9E7E] placeholder:text-[#1C1C1E]/30 transition-colors resize-none min-h-[150px]"
                 />
                 
-                {/* Quick suggestions */}
                 <div className="flex flex-wrap gap-2 mt-4 justify-center">
                   {["Casual weekend", "Smart casual", "Date night", "Work from home", "Brunch with friends"].map((suggestion) => (
                     <button

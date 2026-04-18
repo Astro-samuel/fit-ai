@@ -237,10 +237,13 @@ Return ONLY the JSON object, no other text."""
 @api_router.post("/generate-outfits")
 async def generate_outfits(
     vibe: str = Form(...),
-    clothing_images: List[UploadFile] = File(...)
+    clothing_images: List[UploadFile] = File(...),
+    num_clothing: int = Form(default=0),
+    num_shoes: int = Form(default=0)
 ):
     """
     Generate outfit suggestions using Gemini AI based on uploaded clothing images and vibe.
+    First N items are clothing, remaining are shoes (if num_shoes > 0).
     """
     api_key = GEMINI_API_KEY or EMERGENT_LLM_KEY
     if not api_key:
@@ -249,8 +252,14 @@ async def generate_outfits(
     if len(clothing_images) < 3:
         raise HTTPException(status_code=400, detail="Please upload at least 3 clothing items")
     
-    if len(clothing_images) > 5:
-        raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
+    # Max 5 clothing + 3 shoes = 8 items
+    if len(clothing_images) > 8:
+        raise HTTPException(status_code=400, detail="Maximum 8 items allowed (5 clothing + 3 shoes)")
+    
+    # Determine split between clothing and shoes
+    if num_clothing == 0 and num_shoes == 0:
+        num_clothing = len(clothing_images)
+        num_shoes = 0
     
     try:
         # Read and compress all clothing images
@@ -283,16 +292,28 @@ async def generate_outfits(
         )
         chat.with_model("gemini", "gemini-2.5-flash")
         
-        # Build the prompt
-        prompt_text = f"""I've uploaded {len(clothing_data)} clothing items (indexed 0 to {len(clothing_data)-1}).
+        # Build the prompt - distinguish clothing vs shoes
+        items_description = ""
+        if num_shoes > 0:
+            clothing_indices = list(range(num_clothing))
+            shoe_indices = list(range(num_clothing, num_clothing + num_shoes))
+            items_description = f"""
+Items breakdown:
+- Clothing items (indices {clothing_indices[0]} to {clothing_indices[-1]}): {num_clothing} clothing pieces
+- Shoe items (indices {shoe_indices[0]} to {shoe_indices[-1]}): {num_shoes} pairs of shoes
+
+When creating outfits, try to include shoes when appropriate to complete the look."""
+        
+        prompt_text = f"""I've uploaded {len(clothing_data)} items total (indexed 0 to {len(clothing_data)-1}).
+{items_description}
 
 The user's vibe/style goal is: "{vibe}"
 
-Please analyze these clothing items and create 5 outfit combinations using ONLY these exact items. Consider color theory, silhouette balance, fabric weight, and occasion appropriateness.
+Please analyze these items and create 5 outfit combinations using ONLY these exact items. Consider color theory, silhouette balance, fabric weight, and occasion appropriateness.
 
 Return your response as a valid JSON array with exactly 5 objects. Each object must have:
 - "title": A catchy outfit name (string)
-- "items_used": Array of item indices (numbers from 0 to {len(clothing_data)-1}) used in this outfit
+- "items_used": Array of item indices (numbers from 0 to {len(clothing_data)-1}) used in this outfit - include shoes when suitable
 - "why_it_works": 2-3 sentences explaining why this combination works (string)
 - "vibe_match": How this outfit matches the requested vibe (string)
 
