@@ -1,34 +1,133 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* FitAI Styles */
+
+/* Prevent overflow and ensure proper sizing */
+.App {
+  min-height: 100vh;
+  width: 100%;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+::-webkit-scrollbar-track {
+  background: #F0F0ED;
 }
 
-.App-link {
-    color: #61dafb;
+::-webkit-scrollbar-thumb {
+  background: #E5E5E0;
+  border-radius: 3px;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+::-webkit-scrollbar-thumb:hover {
+  background: #7A7A78;
+}
+
+/* Line clamp utilities */
+.line-clamp-1 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.line-clamp-2 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.line-clamp-3 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* Upload zone drag states */
+.upload-zone {
+  border: 2px dashed #E5E5E0;
+  transition: all 0.3s ease;
+  background: transparent;
+}
+
+.upload-zone:hover,
+.upload-zone.active {
+  border-color: #7C9E7E;
+  background: rgba(124, 158, 126, 0.05);
+}
+
+/* Swipe card styles */
+.swipe-card {
+  background: white;
+  border-radius: 2rem;
+  box-shadow: 0 20px 50px rgba(28, 28, 30, 0.08);
+  overflow: hidden;
+  border: 1px solid rgba(229, 229, 224, 0.5);
+}
+
+/* Card stack depth effect */
+.card-behind {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.card-behind-1 {
+  transform: scale(0.95) translateY(16px);
+  z-index: -1;
+}
+
+.card-behind-2 {
+  transform: scale(0.90) translateY(32px);
+  z-index: -2;
+}
+
+/* Touch-friendly tap targets */
+@media (pointer: coarse) {
+  button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Prevent text selection during swipe */
+.swipe-card {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Smooth image loading */
+img {
+  transition: opacity 0.3s ease;
+}
+
+img[src=""] {
+  opacity: 0;
+}
+
+/* Focus styles for accessibility */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #7C9E7E;
+  outline-offset: 2px;
+}
+
+/* Reduce motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
